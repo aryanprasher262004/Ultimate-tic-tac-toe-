@@ -19,7 +19,10 @@ class SoundManager:
             "click": "assets/sounds/click.wav", 
             "move": "assets/sounds/place.wav",
             "win": "assets/sounds/win.wav",
-            "lose": "assets/sounds/lose.wav"
+            "lose": "assets/sounds/lose.wav",
+            "tick": "assets/sounds/tick.wav",
+            "warning": "assets/sounds/warning.wav",
+            "timesup": "assets/sounds/timesup.wav"
         }
         
         for key, path in self.paths.items():

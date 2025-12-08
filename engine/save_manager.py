@@ -12,6 +12,7 @@ def save_settings():
         "SFX_VOLUME": config.SFX_VOLUME,
         "SFX_ENABLED": config.SFX_ENABLED,
         "GAME_MODE": config.GAME_MODE,
+        "GAME_TIME_MODE": config.GAME_TIME_MODE,
         "SCREEN_WIDTH": config.SCREEN_WIDTH,
         "SCREEN_HEIGHT": config.SCREEN_HEIGHT,
         "FULLSCREEN": config.FULLSCREEN,
@@ -39,6 +40,7 @@ def load_settings():
         if "SFX_VOLUME" in data: config.SFX_VOLUME = data["SFX_VOLUME"]
         if "SFX_ENABLED" in data: config.SFX_ENABLED = data["SFX_ENABLED"]
         if "GAME_MODE" in data: config.GAME_MODE = data["GAME_MODE"]
+        if "GAME_TIME_MODE" in data: config.GAME_TIME_MODE = data["GAME_TIME_MODE"]
         if "SCREEN_WIDTH" in data: config.SCREEN_WIDTH = data["SCREEN_WIDTH"]
         if "SCREEN_HEIGHT" in data: config.SCREEN_HEIGHT = data["SCREEN_HEIGHT"]
         if "FULLSCREEN" in data: config.FULLSCREEN = data["FULLSCREEN"]

@@ -60,6 +60,8 @@ class Game:
         # Game State Data
         self.game_mode = "pvp" # pvp or ai
         self.winner = None
+        self.timeout_win = False  # Track if game ended due to timeout
+        self.timeout_reason = None  # Reason for timeout win
 
         # State Management
         self.states = {

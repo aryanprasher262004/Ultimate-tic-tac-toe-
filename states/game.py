@@ -6,6 +6,7 @@ from ui.ui_button import UIButton
 from engine.ai_minimax import MinimaxAI
 from engine.sound_manager import sound
 from engine.themes import theme_manager
+from engine.timer import game_timer
 import threading
 from ui.tween import tweener
 
@@ -237,6 +238,17 @@ class GameState:
         # MiniBoards for win animation
         self.mini_boards = [MiniBoard(i) for i in range(9)]
         
+        # Timer display properties
+        self.timer_blink_state = False
+        self.timer_blink_timer = 0
+        self.timer_pulse_scale = 1.0
+        
+        # Timer sound tracking
+        self.last_p1_second = -1
+        self.last_p2_second = -1
+        self.warning_played_p1 = False
+        self.warning_played_p2 = False
+        
         self.update_dimensions()
         self.x_wins = 0
         self.o_wins = 0
@@ -291,7 +303,9 @@ class GameState:
     def enter(self, params=None):
         self.update_dimensions()
         def go_home(): self.game.change_state("home")
-        self.back_button = UIButton(10, 10, 100, 40, "Menu", go_home)
+        # Position button at bottom left
+        w, h = self.game.screen.get_size()
+        self.back_button = UIButton(20, h - 60, 100, 40, "Menu", go_home)
         if params == "new_game" or self.logic.game_over:
              self.logic = UltimateTicTacToeLogic() 
              self.ai_thinking = False
@@ -301,6 +315,22 @@ class GameState:
              # Reset visual states
              self.mini_boards = [MiniBoard(i) for i in range(9)]
              self.update_dimensions()
+             
+             # Reset timeout flags
+             self.game.timeout_win = False
+             self.game.timeout_reason = None
+             
+             # Reset timer sound tracking
+             self.last_p1_second = -1
+             self.last_p2_second = -1
+             self.warning_played_p1 = False
+             self.warning_played_p2 = False
+             
+             # Start timer if time mode is enabled
+             if config.GAME_TIME_MODE != "classic":
+                 game_timer.start(config.GAME_TIME_MODE)
+             else:
+                 game_timer.stop()
 
     def exit(self): pass
 
@@ -311,6 +341,56 @@ class GameState:
             self.logic.make_move(board_idx, r, c)
             self.check_game_over()
         self.ai_thinking = False
+
+    def check_time_end(self):
+        """
+        Check if time has expired and determine winner based on chess-like rules:
+        1. If one player runs out of time, opponent wins
+        2. If both run out (rare), compare captured boards
+        3. If time expires before completion, compare captured boards
+        """
+        if config.GAME_TIME_MODE == "classic":
+            return  # No timer in classic mode
+        
+        timeout_player = game_timer.is_out_of_time()
+        
+        if timeout_player:
+            # Time has expired for at least one player
+            p1_time = game_timer.get_time_ms(1)
+            p2_time = game_timer.get_time_ms(2)
+            
+            # Count captured boards for each player
+            x_boards = sum(1 for state in self.logic.board_states if state == "X")
+            o_boards = sum(1 for state in self.logic.board_states if state == "O")
+            
+            # Determine winner based on timeout scenario
+            if p1_time <= 0 and p2_time <= 0:
+                # Both players out of time (rare) - compare boards
+                if x_boards > o_boards:
+                    self.logic.winner = "X"
+                    self.game.timeout_reason = "both_boards"
+                elif o_boards > x_boards:
+                    self.logic.winner = "O"
+                    self.game.timeout_reason = "both_boards"
+                else:
+                    self.logic.winner = "D"  # Draw if equal boards
+                    self.game.timeout_reason = "both_draw"
+            elif p1_time <= 0:
+                # Player 1 (X) out of time - Player 2 (O) wins
+                self.logic.winner = "O"
+                self.game.timeout_reason = "p1_timeout"
+            else:
+                # Player 2 (O) out of time - Player 1 (X) wins
+                self.logic.winner = "X"
+                self.game.timeout_reason = "p2_timeout"
+            
+            # Mark as timeout win
+            self.game.timeout_win = True
+            
+            # End the game
+            self.logic.game_over = True
+            game_timer.stop()
+            self.check_game_over()
 
     def check_game_over(self):
         if self.logic.game_over:
@@ -366,10 +446,81 @@ class GameState:
                              global_c = big_col * 3 + local_col
                              self.cells[global_r][global_c].play_symbol_animation()
                              
+                             # Switch timer turn
+                             if config.GAME_TIME_MODE != "classic":
+                                 game_timer.switch_turn()
+                             
                              self.check_game_over()
 
     def update(self):
         self.back_button.update()
+        
+        # Update timer and check for time-based game end
+        if config.GAME_TIME_MODE != "classic" and not self.logic.game_over:
+            dt = self.game.clock.get_time() / 1000.0
+            game_timer.update(dt)
+            
+            # Check for timeout using chess-like rules
+            self.check_time_end()
+            
+            # Get current times
+            p1_time = game_timer.get_time_ms(1)
+            p2_time = game_timer.get_time_ms(2)
+            p1_seconds = int(p1_time / 1000)
+            p2_seconds = int(p2_time / 1000)
+            
+            # Active player for warning/timesup sounds
+            active_player = 1 if self.logic.current_turn == "X" else 2
+            
+            # Check if either player is low on time for continuous tick
+            either_player_low = p1_seconds < 10 or p2_seconds < 10
+            
+            # Continuous tick sound when either player < 10 seconds
+            if either_player_low:
+                # Use the lower time for tick tracking
+                current_second = min(p1_seconds, p2_seconds)
+                if current_second != self.last_p1_second:  # Reuse p1 tracker for combined tick
+                    sound.play("tick")
+                    self.last_p1_second = current_second
+            
+            # Active player-specific sounds (warning and timesup)
+            if active_player == 1:
+                # Player 1 is active
+                if p1_time <= 0 and not self.logic.game_over:
+                    # Time's up sound
+                    sound.play("timesup")
+                elif p1_seconds < 5 and not self.warning_played_p1:
+                    # Warning beep when < 5 seconds
+                    sound.play("warning")
+                    self.warning_played_p1 = True
+                
+                # Reset warning flag if time goes back above 5 seconds
+                if p1_seconds >= 5:
+                    self.warning_played_p1 = False
+            else:
+                # Player 2 is active
+                if p2_time <= 0 and not self.logic.game_over:
+                    # Time's up sound
+                    sound.play("timesup")
+                elif p2_seconds < 5 and not self.warning_played_p2:
+                    # Warning beep when < 5 seconds
+                    sound.play("warning")
+                    self.warning_played_p2 = True
+                
+                # Reset warning flag if time goes back above 5 seconds
+                if p2_seconds >= 5:
+                    self.warning_played_p2 = False
+            
+            # Blink animation for low time (< 15 seconds)
+            if p1_time < 15000 or p2_time < 15000:
+                self.timer_blink_timer += self.game.clock.get_time()
+                if self.timer_blink_timer > 500:  # Blink every 500ms
+                    self.timer_blink_state = not self.timer_blink_state
+                    self.timer_blink_timer = 0
+                    
+                # Pulse animation
+                pulse_speed = 0.1
+                self.timer_pulse_scale = 1.0 + 0.1 * abs(pygame.time.get_ticks() % 1000 - 500) / 500
         
         # Check for MiniBoard Animations
         for i in range(9):
@@ -400,6 +551,11 @@ class GameState:
                         self.cells[global_r][global_c].play_symbol_animation()
 
                         self.logic.make_move(board_idx, r, c)
+                        
+                        # Switch timer turn
+                        if config.GAME_TIME_MODE != "classic":
+                            game_timer.switch_turn()
+                        
                         self.check_game_over()
                     self.ai_thinking = False
                     self.pending_move = None
@@ -428,7 +584,109 @@ class GameState:
              surface.fill(theme_manager.get_bg_color())
         self.draw_board(surface)
         self.draw_ui(surface)
+        
+        # Draw timers if time mode is enabled
+        if config.GAME_TIME_MODE != "classic":
+            self.draw_timers(surface)
+        
         self.back_button.draw(surface)
+    
+    def draw_timers(self, surface):
+        """Draw timer displays for both players"""
+        w, h = surface.get_size()
+        
+        # Timer dimensions
+        timer_width = 120
+        timer_height = 50
+        margin = 20
+        
+        # Positions (top corners)
+        p1_x = margin
+        p2_x = w - timer_width - margin
+        timer_y = margin
+        
+        # Get times
+        p1_time_str = game_timer.get_time_string(1)
+        p2_time_str = game_timer.get_time_string(2)
+        p1_time_ms = game_timer.get_time_ms(1)
+        p2_time_ms = game_timer.get_time_ms(2)
+        
+        # Determine active player (X = Player 1, O = Player 2)
+        active_player = 1 if self.logic.current_turn == "X" else 2
+        
+        # Draw each timer
+        self.draw_timer_box(surface, p1_x, timer_y, timer_width, timer_height, 
+                           p1_time_str, p1_time_ms, 1, active_player == 1)
+        self.draw_timer_box(surface, p2_x, timer_y, timer_width, timer_height,
+                           p2_time_str, p2_time_ms, 2, active_player == 2)
+    
+    def draw_timer_box(self, surface, x, y, w, h, time_str, time_ms, player, is_active):
+        """Draw a single timer box with theme-aware styling"""
+        # Check if time is low
+        is_low_time = time_ms < 15000
+        
+        # Apply pulse scale if low time
+        if is_low_time:
+            scale = self.timer_pulse_scale
+            w_scaled = w * scale
+            h_scaled = h * scale
+            x = x - (w_scaled - w) / 2
+            y = y - (h_scaled - h) / 2
+            w, h = w_scaled, h_scaled
+        
+        rect = pygame.Rect(x, y, w, h)
+        
+        # Theme-aware colors
+        theme_name = theme_manager.current_theme_name
+        
+        if theme_name == "NEON":
+            bg_color = (20, 0, 40) if not is_low_time else (60, 0, 20)
+            border_color = theme_manager.get_color("glow_cyan") if player == 1 else theme_manager.get_color("glow_color")
+            text_color = (0, 255, 255) if player == 1 else (255, 0, 255)
+        elif theme_name == "BLACK_WHITE":
+            bg_color = (0, 0, 0) if not is_low_time else (40, 0, 0)
+            border_color = (255, 255, 255)
+            text_color = (255, 255, 255)
+        elif theme_name == "PASTEL_SOFT":
+            bg_color = (246, 242, 255) if not is_low_time else (255, 230, 230)
+            border_color = (180, 160, 255)
+            text_color = (100, 80, 120)
+        else:  # RGB_GAMER
+            bg_color = (10, 10, 10) if not is_low_time else (40, 10, 10)
+            border_color = theme_manager.get_color("big_grid_color")
+            text_color = (255, 50, 50) if is_low_time else (100, 255, 100)
+        
+        # Override to red if low time and blinking
+        if is_low_time and not self.timer_blink_state:
+            text_color = (255, 50, 50)
+            border_color = (255, 50, 50)
+        
+        # Drop shadow
+        shadow_offset = 4
+        shadow_rect = pygame.Rect(x + shadow_offset, y + shadow_offset, w, h)
+        shadow_surf = pygame.Surface((int(w), int(h)), pygame.SRCALPHA)
+        pygame.draw.rect(shadow_surf, (0, 0, 0, 80), shadow_surf.get_rect(), border_radius=12)
+        surface.blit(shadow_surf, shadow_rect.topleft)
+        
+        # Background box
+        pygame.draw.rect(surface, bg_color, rect, border_radius=12)
+        
+        # Active player glow
+        if is_active:
+            glow_surf = pygame.Surface((int(w + 10), int(h + 10)), pygame.SRCALPHA)
+            glow_color = border_color if hasattr(border_color, '__iter__') else (100, 100, 255)
+            pygame.draw.rect(glow_surf, (*glow_color[:3], 100), glow_surf.get_rect(), border_radius=14)
+            surface.blit(glow_surf, (x - 5, y - 5))
+        
+        # Border
+        border_width = 3 if is_active else 2
+        pygame.draw.rect(surface, border_color, rect, border_width, border_radius=12)
+        
+        # Time text
+        timer_font = pygame.font.Font(FONTS["bold"], 32)
+        time_surf = timer_font.render(time_str, True, text_color)
+        time_rect = time_surf.get_rect(center=rect.center)
+        surface.blit(time_surf, time_rect)
 
     def draw_ui(self, surface):
         w, h = surface.get_size()

@@ -110,6 +110,7 @@ CLICK_SOUND_PATH = "assets/sounds/click.wav"
 
 # Game State
 GAME_MODE = "self" # "self" or "computer"
+GAME_TIME_MODE = "classic" # "classic", "3m", "5m", "10m"
 
 # Audio Settings
 MUSIC_VOLUME = 0.6
