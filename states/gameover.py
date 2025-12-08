@@ -2,24 +2,19 @@
 import pygame
 import config
 from config import *
-from ui.button import Button
+from ui.ui_button import UIButton
 from PIL import Image, ImageFilter
 
 class GameOverState:
     def __init__(self, game):
         self.game = game
-        self.menu_button = None
-        self.restart_button = None
-        self.font = pygame.font.SysFont(FONT_NAME, FONT_SIZE_NORMAL)
+        self.buttons = []
+        self.font = pygame.font.Font(FONTS["bold"], 64)
         self.blurred_bg = None
         self.overlay_surf = None
 
     def enter(self):
         # 1. Capture Logic
-        # It's difficult to capture the previous screen directly from here because `game.screen` has already been flipped/cleared potentially.
-        # However, usually the last frame of "Game" state is still on the screen surface when we enter "GameOver".
-        # Let's try capturing the current display surface.
-        
         try:
             # Capture screen
             screen_str = pygame.image.tostring(self.game.screen, 'RGB')
@@ -39,35 +34,37 @@ class GameOverState:
         self.overlay_surf.set_alpha(150) # Semi-transparent
         self.overlay_surf.fill((0, 0, 0)) # Black
 
-        # Setup Buttons (Centered Popup style)
+        # Setup Buttons
         center_x = SCREEN_WIDTH // 2
         center_y = SCREEN_HEIGHT // 2
-        popup_width = 400
-        popup_height = 300
         start_y = center_y + 20 
         gap = 80
 
-        self.restart_button = Button(center_x - 100, start_y, 200, 60, "Play Again", self.font, bg_color=GREEN, sound_path=CLICK_SOUND_PATH)
-        self.menu_button = Button(center_x - 100, start_y + gap, 200, 60, "Main Menu", self.font, bg_color=BLUE, sound_path=CLICK_SOUND_PATH)
+        def restart(): self.game.change_state("game")
+        def go_home(): self.game.change_state("home")
+
+        self.buttons = [
+            UIButton(center_x - 100, start_y, 200, 60, "Play Again", restart),
+            UIButton(center_x - 100, start_y + gap, 200, 60, "Main Menu", go_home)
+        ]
 
     def exit(self):
         self.blurred_bg = None # Clean up memory
 
     def handle_event(self, event):
-        if self.restart_button.handle_event(event):
-            self.game.change_state("game")
-        elif self.menu_button.handle_event(event):
-            self.game.change_state("home")
+        for btn in self.buttons:
+            btn.handle_event(event)
 
     def update(self):
-        pass
+        for btn in self.buttons:
+            btn.update()
 
     def draw(self, surface):
         # 1. Draw Blurred Background
         if self.blurred_bg:
             surface.blit(self.blurred_bg, (0, 0))
         else:
-            surface.fill(DARK_GRAY)
+            surface.fill(COLORS["bg_dark"])
             
         # 2. Draw Dark Overlay
         surface.blit(self.overlay_surf, (0, 0))
@@ -81,25 +78,23 @@ class GameOverState:
         popup_rect = pygame.Rect(0, 0, popup_width, popup_height)
         popup_rect.center = (center_x, center_y)
         
-        pygame.draw.rect(surface, (40, 40, 40), popup_rect) # Bg
-        pygame.draw.rect(surface, WHITE, popup_rect, 4) # Border
+        pygame.draw.rect(surface, (40, 40, 40), popup_rect, border_radius=16) # Bg with rounded corners
+        pygame.draw.rect(surface, COLORS["white"], popup_rect, 4, border_radius=16) # Border
         
         # 4. Draw Result Text
-        title_font = pygame.font.SysFont(FONT_NAME, 64, bold=True)
-        
         if self.game.winner:
             text = f"{self.game.winner} Wins!" if self.game.winner != "D" else "It's a Draw!"
-            color = YELLOW if self.game.winner != "D" else WHITE
-            if self.game.winner == "X": color = COLOR_X
-            if self.game.winner == "O": color = COLOR_O
+            color = COLORS["glow_yellow"] if self.game.winner != "D" else COLORS["white"]
+            if self.game.winner == "X": color = COLORS["x_color"]
+            if self.game.winner == "O": color = COLORS["o_color"]
         else:
              text = "Game Over"
-             color = WHITE
+             color = COLORS["white"]
         
-        text_surf = title_font.render(text, True, color)
+        text_surf = self.font.render(text, True, color)
         text_rect = text_surf.get_rect(center=(center_x, center_y - 80))
         surface.blit(text_surf, text_rect)
 
         # 5. Buttons
-        self.restart_button.draw(surface)
-        self.menu_button.draw(surface)
+        for btn in self.buttons:
+            btn.draw(surface)
