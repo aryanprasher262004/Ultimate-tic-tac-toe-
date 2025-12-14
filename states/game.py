@@ -249,6 +249,11 @@ class GameState:
         self.warning_played_p1 = False
         self.warning_played_p2 = False
         
+        # Probability evaluation storage
+        self.win_probability = 0.0
+        self.lose_probability = 0.0
+        self.draw_probability = 0.0
+
         self.update_dimensions()
         self.x_wins = 0
         self.o_wins = 0
@@ -325,6 +330,14 @@ class GameState:
              self.last_p2_second = -1
              self.warning_played_p1 = False
              self.warning_played_p2 = False
+             
+             # Reset probability values
+             self.win_probability = 0.0
+             self.lose_probability = 0.0
+             self.draw_probability = 0.0
+             self.display_win = 0.0
+             self.display_lose = 0.0
+             self.display_draw = 0.0
              
              # Start timer if time mode is enabled
              if config.GAME_TIME_MODE != "classic":
@@ -450,6 +463,13 @@ class GameState:
                              if config.GAME_TIME_MODE != "classic":
                                  game_timer.switch_turn()
                              
+                             # Evaluate win probability after each valid move
+                             from engine import probability_engine
+                             win, lose, draw = probability_engine.evaluate_win_probabilities(self.logic)
+                             self.win_probability = win
+                             self.lose_probability = lose
+                             self.draw_probability = draw
+                             
                              self.check_game_over()
 
     def update(self):
@@ -556,6 +576,13 @@ class GameState:
                         if config.GAME_TIME_MODE != "classic":
                             game_timer.switch_turn()
                         
+                        # Evaluate win probability after AI move
+                        from engine import probability_engine
+                        win, lose, draw = probability_engine.evaluate_win_probabilities(self.logic)
+                        self.win_probability = win
+                        self.lose_probability = lose
+                        self.draw_probability = draw
+                        
                         self.check_game_over()
                     self.ai_thinking = False
                     self.pending_move = None
@@ -584,6 +611,9 @@ class GameState:
              surface.fill(theme_manager.get_bg_color())
         self.draw_board(surface)
         self.draw_ui(surface)
+        
+        # Draw probability bar (like chess evaluation bar)
+        self.draw_probability_bar(surface)
         
         # Draw timers if time mode is enabled
         if config.GAME_TIME_MODE != "classic":
@@ -776,3 +806,65 @@ class GameState:
         for row in range(9):
             for col in range(9):
                 self.cells[row][col].draw(surface)
+
+    def draw_probability_bar(self, surface):
+        """Draw probability bar graph on the right side, similar to chess evaluation bar"""
+        w, h = surface.get_size()
+        bar_width = 48
+        bar_height = 200
+        bar_x = w - bar_width - 40
+        bar_y = h // 2 - bar_height // 2
+
+        # Get current smooth-animated values
+        p_win = self.display_win
+        p_lose = self.display_lose
+        p_draw = self.display_draw
+
+        # Clamp for style/edge cases
+        p_sum = p_win + p_lose + p_draw
+        if p_sum > 1.01:
+            p_win /= p_sum
+            p_lose /= p_sum
+            p_draw /= p_sum
+
+        win_h = int(bar_height * p_win)
+        lose_h = int(bar_height * p_lose)
+        draw_h = bar_height - win_h - lose_h
+
+        # Theme-aware colors
+        theme_colors = {
+            'NEON':   {'win': (0, 255, 255),   'lose': (255, 0, 128),    'draw': (255, 255, 128)},
+            'BLACK_WHITE': {'win': (77, 166, 255),  'lose': (255, 77, 77),   'draw': (204, 204, 204)},
+            'RGB_GAMER':   {'win': (0, 255, 136),  'lose': (255, 0, 68),    'draw': (34, 136, 255)},
+            'PASTEL_SOFT': {'win': (185, 243, 228), 'lose': (255, 212, 178), 'draw': (229, 217, 242)}
+        }
+        theme_key = theme_manager.current_theme_name
+        if theme_key not in theme_colors:
+            color_set = theme_colors['NEON']
+        else:
+            color_set = theme_colors[theme_key]
+
+        win_col = color_set['win']
+        lose_col = color_set['lose']
+        draw_col = color_set['draw']
+        border_col = (40,40,40)
+        font = pygame.font.Font(FONTS["bold"], 20)
+
+        # Background/bar border
+        pygame.draw.rect(surface, border_col, (bar_x-2, bar_y-2, bar_width+4, bar_height+4), border_radius=10)
+        pygame.draw.rect(surface, (20, 20, 20), (bar_x, bar_y, bar_width, bar_height), border_radius=8)
+
+        # Draw each segment from bottom to top: Win, Draw, Lose
+        y = bar_y + bar_height
+        for color, height, prob, label in [ (win_col, win_h, p_win, 'Win'), (draw_col, draw_h, p_draw, 'Draw'), (lose_col, lose_h, p_lose, 'Lose')]:
+            if height > 0:
+                y -= height
+                pygame.draw.rect(surface, color, (bar_x, y, bar_width, height), border_radius=4)
+
+                # Draw label with probability
+                pct = int(round(prob*100))
+                lbl = f"{label}: {pct}%"
+                lbl_col = color
+                lbl_surf = font.render(lbl, True, lbl_col)
+                lbl_rect = lbl_surf.get_rect(left=bar_x + bar_width + 10, centery=y+height//2)
+                surface.blit(lbl_surf, lbl_rect)
